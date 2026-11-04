@@ -1,0 +1,75 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- Defaults also cover the brief interval before settings are loaded. -->
+  <SolidColorBrush x:Key="Ui.Background" Color="#151718" />
+  <SolidColorBrush x:Key="Ui.Surface" Color="#202324" />
+  <SolidColorBrush x:Key="Ui.Foreground" Color="#F1F3F2" />
+  <SolidColorBrush x:Key="Ui.Muted" Color="#B3BBB8" />
+  <SolidColorBrush x:Key="Ui.Accent" Color="#6DE0B7" />
+  <SolidColorBrush x:Key="Ui.Line" Color="#404746" />
+  <SolidColorBrush x:Key="Ui.OnAccent" Color="#102019" />
+  <SolidColorBrush x:Key="Ui.NavSelected" Color="#2C3431" />
+  <SolidColorBrush x:Key="Ui.Focus" Color="#6DE0B7" />
+  <SolidColorBrush x:Key="Ui.ControlBorder" Color="#81918C" />
+  <SolidColorBrush x:Key="Ui.DisabledText" Color="#89918E" />
+  <SolidColorBrush x:Key="Ui.DisabledBackground" Color="#2B2F30" />
+  <SolidColorBrush x:Key="Ui.Danger" Color="#F08B84" />
+  <SolidColorBrush x:Key="Ui.OnDanger" Color="#2B1615" />
+  <FontFamily x:Key="Ui.NumericFont">Cascadia Mono, Consolas</FontFamily>
+  <!-- Vector counterpart of Assets/WattMonitor.svg; the ICO is rendered from the same mark. -->
+  <DrawingImage x:Key="Ui.BrandMark">
+    <DrawingImage.Drawing>
+      <DrawingGroup>
+        <GeometryDrawing Brush="#142B24">
+          <GeometryDrawing.Geometry><RectangleGeometry Rect="8,8,240,240" RadiusX="58" RadiusY="58" /></GeometryDrawing.Geometry>
+          <GeometryDrawing.Pen><Pen Brush="#59BFA0" Thickness="7" /></GeometryDrawing.Pen>
+        </GeometryDrawing>
+        <GeometryDrawing Geometry="M37,141 L74,141 L98,81 L126,176 L150,111 L165,141 L219,141">
+          <GeometryDrawing.Pen><Pen Brush="#81EAC4" Thickness="20" StartLineCap="Round" EndLineCap="Round" LineJoin="Round" /></GeometryDrawing.Pen>
+        </GeometryDrawing>
+      </DrawingGroup>
+    </DrawingImage.Drawing>
+  </DrawingImage>
+
+  <Style x:Key="Ui.Button" TargetType="Button">
+    <Setter Property="Background" Value="{DynamicResource Ui.Surface}" />
+    <Setter Property="Foreground" Value="{DynamicResource Ui.Foreground}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Ui.ControlBorder}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Grid>
+          <Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7" SnapsToDevicePixels="True">
+            <ContentPresenter x:Name="Label" Margin="{TemplateBinding Padding}" RecognizesAccessKey="True"
+                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+          </Border>
+          <Border x:Name="FocusRing" BorderBrush="{DynamicResource Ui.Foreground}" BorderThickness="2" CornerRadius="9"
+                  Margin="-3" Visibility="Collapsed" IsHitTestVisible="False" />
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Ui.Focus}" />
+              <Setter TargetName="Chrome" Property="Opacity" Value="0.92" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Setter TargetName="Chrome" Property="Opacity" Value="0.8" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Ui.DisabledBackground}" />
+              <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Ui.DisabledText}" />
+              <Setter TargetName="Label" Property="TextElement.Foreground" Value="{DynamicResource Ui.DisabledText}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+</ResourceDictionary>

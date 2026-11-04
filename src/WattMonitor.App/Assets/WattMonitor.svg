@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="WattMonitor">
+  <rect x="8" y="8" width="240" height="240" rx="58" fill="#142b24" stroke="#59bfa0" stroke-width="7"/>
+  <path d="M37 141 H74 L98 81 L126 176 L150 111 L165 141 H219" fill="none" stroke="#81eac4" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WattMonitor.Core/WattMonitor.Core.csproj" />
+    <Project Path="src/WattMonitor.App/WattMonitor.App.csproj" />
+    <Project Path="src/WattMonitor.Service/WattMonitor.Service.csproj" />
+    <Project Path="src/WattMonitor.Updater/WattMonitor.Updater.csproj" />
+  </Folder>
+</Solution>

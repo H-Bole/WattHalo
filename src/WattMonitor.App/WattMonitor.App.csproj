@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Product>WattHalo</Product>
+    <AssemblyTitle>WattHalo</AssemblyTitle>
+    <Description>WattHalo 本机能耗与性能监测</Description>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/WattMonitor.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../WattMonitor.Core/WattMonitor.Core.csproj" /></ItemGroup>
+  <ItemGroup><Resource Include="Assets/WattMonitor.ico" /></ItemGroup>
+</Project>

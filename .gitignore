@@ -1,0 +1,14 @@
+**/bin/
+**/obj/
+.vs/
+artifacts/
+*.user
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.csv
+*.pfx
+*.key
+*.pk8
+*.dpapi

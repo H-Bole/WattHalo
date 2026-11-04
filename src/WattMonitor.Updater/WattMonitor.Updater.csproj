@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <Product>WattHalo 更新助手</Product>
+    <AssemblyTitle>WattHalo 更新助手</AssemblyTitle>
+    <ApplicationIcon>../WattMonitor.App/Assets/WattMonitor.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../WattMonitor.App/Updates/UpdateManifest.cs" Link="UpdateManifest.cs" />
+    <Compile Include="../WattMonitor.App/Updates/ProtectedPaths.cs" Link="ProtectedPaths.cs" />
+  </ItemGroup>
+</Project>

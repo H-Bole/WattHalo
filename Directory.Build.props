@@ -1,0 +1,15 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Version>0.3.1</Version>
+    <Authors>WattHalo contributors</Authors>
+    <Deterministic>true</Deterministic>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'WattMonitor.App' Or '$(MSBuildProjectName)' == 'WattMonitor.Updater'">
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)packaging\update-public.pem" LogicalName="WattMonitor.UpdatePublicKey.pem" Condition="Exists('$(MSBuildThisFileDirectory)packaging\update-public.pem')" />
+  </ItemGroup>
+</Project>
