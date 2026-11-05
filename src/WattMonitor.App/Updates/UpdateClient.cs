@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Pipes;
+using System.Net;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
@@ -137,32 +138,61 @@ internal sealed class UpdateClient
 {
     internal const string ReleasesUrl = "https://github.com/H-Bole/WattHalo/releases/latest";
     private static readonly HttpClient Http = CreateClient();
-    private static HttpClient CreateClient()
+    private static readonly HttpClient DiscoveryHttp = CreateClient(false);
+    private static HttpClient CreateClient(bool allowAutoRedirect = true)
     {
-        var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("WattMonitor-Updater/1.0");
+        var http = new HttpClient(new HttpClientHandler
+        {
+            AllowAutoRedirect = allowAutoRedirect, UseCookies = false, UseDefaultCredentials = false
+        }) { Timeout = TimeSpan.FromMinutes(10) };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("WattHalo-Updater/1.0");
         http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return http;
     }
 
     internal async Task<UpdateRelease?> CheckAsync(CancellationToken cancellationToken = default)
     {
-        var bytes = await ReadLimitedAsync(new Uri("https://api.github.com/repos/H-Bole/WattHalo/releases/latest"), 256 * 1024, cancellationToken);
-        using var response = JsonDocument.Parse(bytes);
-        var root = response.RootElement;
-        if (root.GetProperty("draft").GetBoolean() || root.GetProperty("prerelease").GetBoolean())
-            throw new InvalidDataException("GitHub 返回了非正式发行版。");
-        var tag = root.GetProperty("tag_name").GetString() ?? "";
+        using var response = await Http.GetAsync("https://api.github.com/repos/H-Bole/WattHalo/releases/latest", HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        string tag, notes = "";
+        JsonElement? assets = null;
+        if ((response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests) &&
+            !response.Headers.Contains("Retry-After") &&
+            response.Headers.TryGetValues("X-RateLimit-Remaining", out var remaining) && remaining.SequenceEqual(new[] { "0" }))
+        {
+            using var latest = await DiscoveryHttp.GetAsync(ReleasesUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            const string prefix = "https://github.com/H-Bole/WattHalo/releases/tag/";
+            if (latest.StatusCode is not (HttpStatusCode.MovedPermanently or HttpStatusCode.Redirect or HttpStatusCode.RedirectMethod or
+                HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect) ||
+                !latest.Headers.NonValidated.TryGetValues("Location", out var locations) || locations.ToArray() is not [var location] ||
+                !Uri.TryCreate(location, UriKind.Absolute, out _) || !location.StartsWith(prefix, StringComparison.Ordinal))
+                throw new InvalidDataException("发行版跳转地址无效。");
+            tag = location[prefix.Length..];
+        }
+        else
+        {
+            response.EnsureSuccessStatusCode();
+            var bytes = await ReadLimitedAsync(response, 256 * 1024, cancellationToken);
+            using var release = JsonDocument.Parse(bytes);
+            var root = release.RootElement;
+            if (root.GetProperty("draft").GetBoolean() || root.GetProperty("prerelease").GetBoolean())
+                throw new InvalidDataException("GitHub 返回了非正式发行版。");
+            tag = root.GetProperty("tag_name").GetString() ?? "";
+            assets = root.GetProperty("assets").Clone();
+            notes = root.TryGetProperty("body", out var body) && body.ValueKind == JsonValueKind.String ? body.GetString() ?? "" : "";
+        }
         var textVersion = tag.StartsWith('v') ? tag[1..] : tag;
-        if (!UpdateManifest.TryVersion(textVersion, out var releaseVersion)) throw new InvalidDataException("发行版本号无效。");
-        var assets = root.GetProperty("assets").EnumerateArray().ToArray();
+        if (!UpdateManifest.TryVersion(textVersion, out var releaseVersion) ||
+            (assets is null && textVersion != releaseVersion.ToString(3))) throw new InvalidDataException("发行版本号无效。");
         Uri Asset(string name)
         {
-            var matches = assets.Where(a => a.GetProperty("name").GetString() == name).ToArray();
-            if (matches.Length != 1) throw new InvalidDataException("发行版缺少唯一的更新文件：" + name);
-            var value = matches[0].GetProperty("browser_download_url").GetString();
             var expected = "https://github.com/H-Bole/WattHalo/releases/download/" + tag + "/" + name;
-            if (!string.Equals(value, expected, StringComparison.Ordinal)) throw new InvalidDataException("发行版更新地址无效。");
+            if (assets is JsonElement apiAssets)
+            {
+                var matches = apiAssets.EnumerateArray().Where(a => a.GetProperty("name").GetString() == name).ToArray();
+                if (matches.Length != 1) throw new InvalidDataException("发行版缺少唯一的更新文件：" + name);
+                var value = matches[0].GetProperty("browser_download_url").GetString();
+                if (!string.Equals(value, expected, StringComparison.Ordinal)) throw new InvalidDataException("发行版更新地址无效。");
+            }
             return new Uri(expected);
         }
         var manifestBytes = await ReadLimitedAsync(Asset(UpdateManifest.ManifestName), 16384, cancellationToken);
@@ -171,7 +201,6 @@ internal sealed class UpdateClient
         if (manifest.Version != textVersion) throw new InvalidDataException("签名清单与发行版本不一致。");
         var current = typeof(UpdateClient).Assembly.GetName().Version ?? new Version(0, 0, 0);
         var normalized = new Version(current.Major, current.Minor, Math.Max(0, current.Build));
-        var notes = root.TryGetProperty("body", out var body) && body.ValueKind == JsonValueKind.String ? body.GetString() ?? "" : "";
         notes = new string(notes.Where(c => !char.IsControl(c) || c is '\r' or '\n' or '\t').Take(8000).ToArray());
         return releaseVersion <= normalized ? null : new UpdateRelease(textVersion, Asset(UpdateManifest.ArchiveName), manifestBytes, signature, manifest.Size, notes);
     }
@@ -218,6 +247,11 @@ internal sealed class UpdateClient
     {
         using var response = await Http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
+        return await ReadLimitedAsync(response, maximum, cancellationToken);
+    }
+
+    private static async Task<byte[]> ReadLimitedAsync(HttpResponseMessage response, int maximum, CancellationToken cancellationToken)
+    {
         if (response.Content.Headers.ContentLength > maximum) throw new InvalidDataException("更新元数据过大。");
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var output = new MemoryStream();
