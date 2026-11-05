@@ -321,8 +321,13 @@ public sealed class EnergyStore : IDisposable
             using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             using (var writer = new StreamWriter(stream, new UTF8Encoding(true)))
             {
-                writer.WriteLine("时间UTC,部件电量(kWh),估算整机电量(kWh),估算电费(元),有效采样秒,完整功率秒");
-                foreach (var p in rows) writer.WriteLine(FormattableString.Invariant($"{p.Start:O},{p.ComponentKwh:R},{p.EstimatedKwh:R},{p.CostYuan},{p.RecordedSeconds:R},{p.CompleteSeconds:R}"));
+                writer.WriteLine("时间UTC,部件电量(kWh),估算整机电量(kWh),估算电费(元),有效采样秒,完整功率秒,功率覆盖状态(按有效采样秒)");
+                foreach (var p in rows)
+                {
+                    var hasCompletePower = p.CompleteSeconds > 0;
+                    var status = !hasCompletePower ? "未知" : p.CompleteSeconds < p.RecordedSeconds ? "部分" : "完整";
+                    writer.WriteLine(FormattableString.Invariant($"{p.Start:O},{p.ComponentKwh:R},{(hasCompletePower ? p.EstimatedKwh : (double?)null):R},{(hasCompletePower ? p.CostYuan : (decimal?)null)},{p.RecordedSeconds:R},{p.CompleteSeconds:R},{status}"));
+                }
             }
             File.Move(temporary, destination, overwrite: true);
         }

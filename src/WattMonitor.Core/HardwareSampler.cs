@@ -14,6 +14,7 @@ public sealed class HardwareSampler : IDisposable
     private readonly Dictionary<string, (long Rx, long Tx)> networks = [];
     private readonly PerformanceCounter? diskRead, diskWrite;
     private ulong oldIdle, oldKernel, oldUser;
+    private bool hasCpuBaseline;
     private long oldClock;
     private string? hardwareError;
     private ProcessSample[] lastProcesses = [];
@@ -29,7 +30,7 @@ public sealed class HardwareSampler : IDisposable
             diskRead.NextValue(); diskWrite.NextValue();
         }
         catch { diskRead?.Dispose(); diskWrite?.Dispose(); diskRead = diskWrite = null; }
-        GetSystemTimes(out oldIdle, out oldKernel, out oldUser);
+        hasCpuBaseline = GetSystemTimes(out oldIdle, out oldKernel, out oldUser);
         oldClock = Stopwatch.GetTimestamp();
     }
 
@@ -39,14 +40,18 @@ public sealed class HardwareSampler : IDisposable
         var warnings = new List<string>();
         var clock = Stopwatch.GetTimestamp();
         var elapsed = Stopwatch.GetElapsedTime(oldClock, clock).TotalSeconds;
-        var cpu = 0d;
+        double? cpu = null;
         if (GetSystemTimes(out var idle, out var kernel, out var user))
         {
-            var total = (kernel - oldKernel) + (user - oldUser);
-            if (total > 0) cpu = Math.Clamp(100d * (total - Math.Min(total, idle - oldIdle)) / total, 0, 100);
+            if (hasCpuBaseline && idle >= oldIdle && kernel >= oldKernel && user >= oldUser)
+            {
+                var total = (kernel - oldKernel) + (user - oldUser);
+                if (total > 0) cpu = Math.Clamp(100d * (total - Math.Min(total, idle - oldIdle)) / total, 0, 100);
+            }
             (oldIdle, oldKernel, oldUser) = (idle, kernel, user);
+            hasCpuBaseline = true;
         }
-        else warnings.Add("系统CPU占用读取失败");
+        else { hasCpuBaseline = false; warnings.Add("系统CPU占用读取失败"); }
         oldClock = clock;
         var cpuName = "CPU";
         double? cpuWatts = null;

@@ -151,17 +151,17 @@ internal sealed class SettingsView : StackPanel
     }
     public void Refresh()
     {
-        var s = controller.Settings; var kind = s.OrbMetric; var value = Ui.Value(controller.Snapshot, kind);
+        var s = controller.Settings; var kind = s.OrbMetric;
+        var sample = controller.MonitorStatus.IsStale ? null : controller.Snapshot;
+        var value = Ui.Value(sample, kind);
         orbPreview.Text = kind is MetricKind.Disk or MetricKind.Network ? Ui.Bytes(value) : value.HasValue ? value.Value.ToString("0") : "—";
         orbPreviewLabel.Text = Ui.Name(kind) + (kind == MetricKind.Power ? " · W" : kind is MetricKind.Disk or MetricKind.Network ? "/s" : " · %");
-        var sample = controller.Snapshot;
         var gpu = sample?.Gpus.FirstOrDefault(g => g.IsDiscrete) ?? sample?.Gpus.FirstOrDefault();
-        var stale = controller.MonitorStatus.IsStale;
         string PreviewMetric(MetricKind metric)
         {
             if (metric is not (MetricKind.Cpu or MetricKind.Gpu)) return Ui.Name(metric) + " " + Ui.Metric(sample, metric);
-            var reading = stale ? null : metric == MetricKind.Cpu ? sample?.CpuPercent : gpu?.UtilizationPercent;
-            var watts = stale ? null : metric == MetricKind.Cpu ? sample?.CpuPackageWatts : gpu?.PowerWatts;
+            var reading = metric == MetricKind.Cpu ? sample?.CpuPercent : gpu?.UtilizationPercent;
+            var watts = metric == MetricKind.Cpu ? sample?.CpuPackageWatts : gpu?.PowerWatts;
             return Ui.Name(metric) + " " + (reading is { } value ? value.ToString("F0", CultureInfo.CurrentCulture) + "%" : "—") + " · " + (watts is { } power ? power.ToString("F1", CultureInfo.CurrentCulture) + " W" : "— W");
         }
         taskbarPreview.Text = string.Join("   ·   ", s.TaskbarMetrics.Select(PreviewMetric)); taskbarMode.Text = Ui.Diagnostic(controller.TaskbarMode);

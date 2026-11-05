@@ -69,7 +69,7 @@ public sealed record TelemetrySnapshot
     public long? UnbiasedTimeTicks { get; init; }
     public long? TickCountMilliseconds { get; init; }
     public SamplingTimings? Timings { get; init; }
-    public double CpuPercent { get; init; }
+    public double? CpuPercent { get; init; }
     public string CpuName { get; init; } = "CPU";
     public double? CpuPackageWatts { get; init; }
     public string CpuPowerSource { get; init; } = "不可用";
