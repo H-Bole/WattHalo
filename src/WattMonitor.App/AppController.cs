@@ -268,6 +268,9 @@ public sealed class AppController : IDisposable
             Theme = Enum.IsDefined(value.Theme) ? value.Theme : ThemePreference.Dark,
             Language = Enum.IsDefined(value.Language) ? value.Language : LanguagePreference.System,
             HistoryChart = Enum.IsDefined(value.HistoryChart) ? value.HistoryChart : HistoryChartStyle.Bars,
+            LiveChart = Enum.IsDefined(value.LiveChart) ? value.LiveChart : LiveChartStyle.Line,
+            OrbStyle = Enum.IsDefined(value.OrbStyle) ? value.OrbStyle : OrbStyle.TechRing,
+            OrbSize = Math.Clamp(value.OrbSize, 64, 160),
             PanelSelectedTab = value.PanelSelectedTab ?? value.SelectedTab,
             OrbLeft = Finite(value.OrbLeft), OrbTop = Finite(value.OrbTop),
             TaskbarLeft = Finite(value.TaskbarLeft), TaskbarTop = Finite(value.TaskbarTop)

@@ -16,4 +16,26 @@ NVML 由用户机器上安装的 NVIDIA 驱动提供，本项目通过公开 API
 
 完整间接依赖及版本由发行构建从 NuGet 解析结果生成；请同时阅读发行包 `licenses` 目录。若某个包将声明放在外部许可页面，清单会保留许可表达式或链接，不将缺少本地许可文件解释为没有许可义务。
 
-功能与交互研究参考 WattSeal（GPL-3.0）和 agent-speed（MIT）。本项目的硬件采集、统计、界面和 Win32 任务栏实现独立编写，未复制两项目的实现代码。设计参考 ui-ux-pro-max 与 Emil Kowalski 的公开交互指导；没有分发其技能文件。
+功能与交互研究参考 WattSeal（GPL-3.0）；未复制其实现代码。任务栏分层呈现参考 [agent-speed](https://github.com/zoefix/agent-speed) 的实现，适用以下 MIT 许可。设计参考 ui-ux-pro-max 与 Emil Kowalski 的公开交互指导；没有分发其技能文件。
+
+### agent-speed
+
+Copyright (c) 2026 zoefix
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -11,6 +11,7 @@ internal sealed class DashboardView : StackPanel
     private readonly bool compact;
     private readonly Dictionary<MetricKind, Button> tabs = [];
     private readonly Dictionary<int, Button> ranges = [];
+    private readonly Dictionary<LiveChartStyle, Button> chartStyles = [];
     private readonly TextBlock value = Ui.Text("—", 36);
     private readonly TextBlock subtitle = Ui.Text("等待本机采集", 12, Ui.Muted);
     private TextBlock info = Ui.Text("", 14, Ui.Muted);
@@ -44,14 +45,24 @@ internal sealed class DashboardView : StackPanel
         }
         Children.Add(tabPanel);
         var body = new StackPanel();
-        var heading = new Grid(); heading.ColumnDefinitions.Add(new ColumnDefinition()); heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var heading = new StackPanel();
         var metric = new StackPanel(); if (!compact) metric.Children.Add(Ui.Text("当前读数", 12, Ui.Muted)); metric.Children.Add(value); metric.Children.Add(subtitle); heading.Children.Add(metric);
         var controls = new WrapPanel { VerticalAlignment = VerticalAlignment.Top, HorizontalAlignment = HorizontalAlignment.Right };
         foreach (var range in new[] { 5, 15, 60 })
         {
             var button = Ui.Button(range + (compact ? " 分" : " 分钟"), () => { minutes = range; Refresh(true); }); button.Padding = compact ? new Thickness(6, 3, 6, 3) : new Thickness(9, 5, 9, 5); button.MinHeight = compact ? 27 : 30; if (compact) button.Margin = new Thickness(0, 2, 4, 2); ranges[range] = button; controls.Children.Add(button);
         }
-        Grid.SetColumn(controls, 1); heading.Children.Add(controls); body.Children.Add(heading); body.Children.Add(chart);
+        heading.Children.Add(controls); body.Children.Add(heading);
+        var chartControls = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
+        foreach (var (style, label) in new[] { (LiveChartStyle.Line, "折线"), (LiveChartStyle.Area, "面积"), (LiveChartStyle.Bars, "柱状") })
+        {
+            var button = Ui.Button(label, () => controller.QueueSettings(s => s with { LiveChart = style }));
+            button.Padding = compact ? new Thickness(6, 3, 6, 3) : new Thickness(9, 5, 9, 5);
+            button.MinHeight = compact ? 27 : 30;
+            button.Margin = new Thickness(0, 2, 4, 2);
+            chartStyles[style] = button; chartControls.Children.Add(button);
+        }
+        body.Children.Add(chartControls); body.Children.Add(chart);
         if (!compact) body.Children.Add(Ui.Text("横轴为本地时间；断线代表缺失采样。移动鼠标查看实际时间与数值。", 12, Ui.Muted));
         Children.Add(DetailCard(body)); Children.Add(detail);
         IsVisibleChanged += (_, _) => { if (IsVisible) Refresh(true); };
@@ -66,6 +77,7 @@ internal sealed class DashboardView : StackPanel
     {
         if (selected) { button.SetResourceReference(Control.BackgroundProperty, "Ui.Accent"); button.SetResourceReference(Control.ForegroundProperty, "Ui.OnAccent"); }
         else { button.SetResourceReference(Control.BackgroundProperty, "Ui.Surface"); button.SetResourceReference(Control.ForegroundProperty, "Ui.Foreground"); }
+        button.SetResourceReference(Control.BorderBrushProperty, selected ? "Ui.Accent" : "Ui.ControlBorder");
     }
 
     public void Refresh(bool force = false)
@@ -74,6 +86,12 @@ internal sealed class DashboardView : StackPanel
         var kind = Kind;
         foreach (var pair in tabs) Selected(pair.Value, pair.Key == kind);
         foreach (var pair in ranges) Selected(pair.Value, pair.Key == minutes);
+        foreach (var pair in chartStyles)
+        {
+            var selected = pair.Key == controller.Settings.LiveChart;
+            Selected(pair.Value, selected);
+            System.Windows.Automation.AutomationProperties.SetItemStatus(pair.Value, selected ? Ui.T("已选中", "Selected") : "");
+        }
         if (builtKind != kind) BuildDetails(kind);
         var stale = controller.MonitorStatus.IsStale;
         var s = stale ? null : controller.Snapshot;
@@ -92,7 +110,7 @@ internal sealed class DashboardView : StackPanel
             _ => Ui.T("全局接收 + 发送 · 所有有效网卡", "System receive + send · all active network adapters")
         };
         var series = controller.Trend.Select(p => (p.Timestamp, Value: kind is MetricKind.Disk or MetricKind.Network ? Ui.Value(p, kind, selectedGpu) / 1048576 : Ui.Value(p, kind, selectedGpu)));
-        chart.SetData(series, minutes, Math.Max(5, controller.Settings.RefreshSeconds * 1.5), kind == MetricKind.Power ? "W" : kind is MetricKind.Disk or MetricKind.Network ? "MB/s" : "%", kind is MetricKind.Cpu or MetricKind.Gpu or MetricKind.Memory);
+        chart.SetData(series, minutes, Math.Max(5, controller.Settings.RefreshSeconds * 1.5), kind == MetricKind.Power ? "W" : kind is MetricKind.Disk or MetricKind.Network ? "MB/s" : "%", kind is MetricKind.Cpu or MetricKind.Gpu or MetricKind.Memory, controller.Settings.LiveChart);
         info.Text = Info(s, kind);
         warning.Text = stale ? Ui.T("数据已过期，等待重新连接。", "Data is stale; waiting to reconnect.") :
             s is null ? Ui.T("正在连接采集源；未知读数显示为 —。", "Connecting to the data source; unavailable readings are shown as —.") : string.Join("\n", s.Warnings.Select(Ui.Diagnostic));

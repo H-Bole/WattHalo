@@ -13,12 +13,51 @@ using WattMonitor.Core;
 
 namespace WattMonitor.App.Views;
 
+internal sealed class OrbFace : Viewbox
+{
+    private readonly TextBlock value, label;
+    private readonly Ellipse disc = new() { StrokeThickness = 1 };
+    private readonly Ellipse outer = new() { Margin = new Thickness(4), StrokeThickness = 1.5,
+        StrokeDashArray = new DoubleCollection { 38, 4, 4, 4 }, Opacity = .9 };
+    private readonly Ellipse inner = new() { Margin = new Thickness(9), StrokeThickness = .8 };
+    private readonly Ellipse shine = new() { Margin = new Thickness(4), IsHitTestVisible = false,
+        Fill = new LinearGradientBrush(Color.FromArgb(85, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90) };
+
+    public OrbFace(TextBlock value, TextBlock label)
+    {
+        this.value = value; this.label = label;
+        var face = new Grid { Width = 82, Height = 82 };
+        disc.SetResourceReference(Shape.StrokeProperty, "Ui.Line");
+        outer.SetResourceReference(Shape.StrokeProperty, "Ui.Accent");
+        inner.SetResourceReference(Shape.StrokeProperty, "Ui.Line");
+        face.Children.Add(disc); face.Children.Add(outer); face.Children.Add(inner); face.Children.Add(shine);
+        var contents = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        value.TextAlignment = TextAlignment.Center; label.TextAlignment = TextAlignment.Center;
+        contents.Children.Add(new Viewbox { MaxWidth = 62, MaxHeight = 28, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, Child = value });
+        contents.Children.Add(new Viewbox { MaxWidth = 62, MaxHeight = 15, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, Child = label });
+        face.Children.Add(contents); Child = face;
+        Apply(OrbStyle.TechRing);
+    }
+
+    public void Apply(OrbStyle style)
+    {
+        var ring = style == OrbStyle.TechRing;
+        outer.Visibility = inner.Visibility = ring ? Visibility.Visible : Visibility.Collapsed;
+        shine.Visibility = style == OrbStyle.Glass && !SystemParameters.HighContrast ? Visibility.Visible : Visibility.Collapsed;
+        disc.Opacity = style == OrbStyle.Glass && !SystemParameters.HighContrast ? .72 : 1;
+        disc.SetResourceReference(Shape.FillProperty, style == OrbStyle.Solid ? "Ui.Accent" : "Ui.Surface");
+        value.SetResourceReference(TextBlock.ForegroundProperty, style == OrbStyle.Solid ? "Ui.OnAccent" : "Ui.Foreground");
+        label.SetResourceReference(TextBlock.ForegroundProperty, style == OrbStyle.Solid ? "Ui.OnAccent" : "Ui.Muted");
+    }
+}
+
 public sealed class OrbWindow : Window
 {
     private readonly AppController controller;
     private readonly TextBlock value = Ui.Text("—", 22);
     private readonly TextBlock label = Ui.Text("功率", 12, Ui.Muted);
     private readonly Grid hitArea;
+    private readonly OrbFace face;
     private Point start;
     private bool moved;
     internal event EventHandler? DisplayGeometryChanged;
@@ -30,7 +69,7 @@ public sealed class OrbWindow : Window
         this.controller = controller;
         Ui.Window(this);
         Ui.Bind(this, TitleProperty, "WattHalo 悬浮监测");
-        Width = Height = 88;
+        Width = Height = Math.Clamp(controller.Settings.OrbSize, 64, 160);
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
         Background = Brushes.Transparent;
@@ -43,25 +82,9 @@ public sealed class OrbWindow : Window
 
         hitArea = new Grid { Margin = new Thickness(3), Background = Brushes.Transparent, Focusable = true,
             ToolTip = "点击展开快速监测；拖动调整位置；右键切换指标。" };
-        var disc = new Ellipse { StrokeThickness = 1 };
-        disc.SetResourceReference(Shape.FillProperty, "Ui.Surface");
-        disc.SetResourceReference(Shape.StrokeProperty, "Ui.Line");
-        hitArea.Children.Add(disc);
-        var outer = new Ellipse { Margin = new Thickness(4), StrokeThickness = 1.5,
-            StrokeDashArray = new DoubleCollection { 38, 4, 4, 4 }, Opacity = .9 };
-        outer.SetResourceReference(Shape.StrokeProperty, "Ui.Accent");
-        hitArea.Children.Add(outer);
-        var inner = new Ellipse { Margin = new Thickness(9), StrokeThickness = .8 };
-        inner.SetResourceReference(Shape.StrokeProperty, "Ui.Line");
-        hitArea.Children.Add(inner);
-        var contents = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
-        value.TextAlignment = TextAlignment.Center;
         value.SetValue(System.Windows.Documents.Typography.NumeralAlignmentProperty, FontNumeralAlignment.Tabular);
-        label.TextAlignment = TextAlignment.Center;
-        label.SetResourceReference(TextBlock.ForegroundProperty, "Ui.Muted");
-        contents.Children.Add(value);
-        contents.Children.Add(label);
-        hitArea.Children.Add(contents);
+        face = new OrbFace(value, label);
+        hitArea.Children.Add(face);
         Content = hitArea;
 
         var menu = new ContextMenu();
@@ -175,6 +198,13 @@ public sealed class OrbWindow : Window
     {
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(() => Updated(sender, e)); return; }
         if (!IsVisible) return;
+        var size = Math.Clamp(controller.Settings.OrbSize, 64, 160);
+        if (Width != size)
+        {
+            Width = Height = size;
+            Dispatcher.BeginInvoke(() => { CorrectPosition(); DisplayGeometryChanged?.Invoke(this, EventArgs.Empty); }, System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+        face.Apply(controller.Settings.OrbStyle);
         var kind = controller.Settings.OrbMetric;
         var number = Ui.Value(controller.Snapshot, kind);
         if (controller.MonitorStatus.IsStale || number is not { } n || !double.IsFinite(n) || n < 0 ||

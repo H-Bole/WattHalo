@@ -4,6 +4,8 @@ public enum MetricKind { Power, Cpu, Gpu, Memory, Disk, Network }
 public enum ThemePreference { Dark, Light, System }
 public enum LanguagePreference { System, Chinese, English }
 public enum HistoryChartStyle { Bars, Line, Smooth }
+public enum LiveChartStyle { Line, Area, Bars }
+public enum OrbStyle { TechRing, Solid, Glass }
 
 public sealed record AppSettings
 {
@@ -17,6 +19,9 @@ public sealed record AppSettings
     public ThemePreference Theme { get; init; } = ThemePreference.Dark;
     public LanguagePreference Language { get; init; } = LanguagePreference.System;
     public HistoryChartStyle HistoryChart { get; init; } = HistoryChartStyle.Bars;
+    public LiveChartStyle LiveChart { get; init; } = LiveChartStyle.Line;
+    public OrbStyle OrbStyle { get; init; } = OrbStyle.TechRing;
+    public int OrbSize { get; init; } = 88;
     public bool PanelPinned { get; init; }
     public MetricKind OrbMetric { get; init; } = MetricKind.Power;
     public MetricKind SelectedTab { get; init; } = MetricKind.Power;

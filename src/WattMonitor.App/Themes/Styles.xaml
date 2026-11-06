@@ -31,7 +31,20 @@
     </DrawingImage.Drawing>
   </DrawingImage>
 
+  <Style x:Key="Ui.KeyboardFocus" TargetType="Control">
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Control">
+          <Border Margin="2" BorderBrush="{DynamicResource Ui.Background}" BorderThickness="1" CornerRadius="5">
+            <Border BorderBrush="{DynamicResource Ui.Foreground}" BorderThickness="1" CornerRadius="4" />
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <Style x:Key="Ui.Button" TargetType="Button">
+    <Setter Property="FocusVisualStyle" Value="{StaticResource Ui.KeyboardFocus}" />
     <Setter Property="Background" Value="{DynamicResource Ui.Surface}" />
     <Setter Property="Foreground" Value="{DynamicResource Ui.Foreground}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Ui.ControlBorder}" />
@@ -48,8 +61,6 @@
                               HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
                               VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
           </Border>
-          <Border x:Name="FocusRing" BorderBrush="{DynamicResource Ui.Foreground}" BorderThickness="2" CornerRadius="9"
-                  Margin="-3" Visibility="Collapsed" IsHitTestVisible="False" />
           </Grid>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
@@ -58,9 +69,6 @@
             </Trigger>
             <Trigger Property="IsPressed" Value="True">
               <Setter TargetName="Chrome" Property="Opacity" Value="0.8" />
-            </Trigger>
-            <Trigger Property="IsKeyboardFocused" Value="True">
-              <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Ui.DisabledBackground}" />

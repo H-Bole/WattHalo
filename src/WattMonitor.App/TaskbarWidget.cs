@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Globalization;
+using Media = System.Windows.Media;
+using Imaging = System.Windows.Media.Imaging;
 using WattMonitor.Core;
 
 namespace WattMonitor.App;
@@ -31,6 +34,9 @@ internal sealed class TaskbarWidget : IDisposable
     private IntPtr obstacleTray, queryTray, eventHook;
     private long obstacleGeneration, queryGeneration;
     private long lastObstacleAttempt;
+    private readonly LayeredSurface surface = new();
+    private Media.DrawingVisual? visual;
+    private Imaging.RenderTargetBitmap? renderBitmap;
     private bool layoutDirty = true;
     private int retryRequested, visibilityChanged, reportVersion;
 
@@ -107,7 +113,7 @@ internal sealed class TaskbarWidget : IDisposable
             Instance = GetModuleHandle(null), ClassName = className, Cursor = LoadCursor(IntPtr.Zero, (IntPtr)32512)
         };
         var registered = RegisterClassEx(ref wc) != 0;
-        if (!registered) ReportMode("任务栏组件初始化失败，正在重试");
+        if (!registered) ReportNativeFailure("RegisterClassEx", Marshal.GetLastWin32Error());
         SetTimer(IntPtr.Zero, (UIntPtr)1, 1500, IntPtr.Zero);
         if (registered) CreateOrLocate();
         while (!disposed && GetMessage(out var message, IntPtr.Zero, 0, 0) > 0)
@@ -116,7 +122,11 @@ internal sealed class TaskbarWidget : IDisposable
             {
                 if (Interlocked.Exchange(ref visibilityChanged, 0) != 0) reportedMode = "";
                 if (Interlocked.Exchange(ref retryRequested, 0) != 0) InvalidateObstacles(true);
-                if (!registered) registered = RegisterClassEx(ref wc) != 0;
+                if (!registered)
+                {
+                    registered = RegisterClassEx(ref wc) != 0;
+                    if (!registered) ReportNativeFailure("RegisterClassEx", Marshal.GetLastWin32Error());
+                }
                 if (registered) CreateOrLocate();
                 continue;
             }
@@ -140,7 +150,7 @@ internal sealed class TaskbarWidget : IDisposable
             return;
         }
         var tray = FindWindow("Shell_TrayWnd", null);
-        if (window != IntPtr.Zero && (!IsWindow(window) || parent != tray)) DestroyWidget();
+        if (window != IntPtr.Zero && (!IsWindow(window) || parent != tray || GetParent(window) != tray)) DestroyWidget();
         parent = tray;
         WatchTaskbar(tray);
         if (tray == IntPtr.Zero)
@@ -148,19 +158,20 @@ internal sealed class TaskbarWidget : IDisposable
             ReportMode("未找到 Windows 任务栏，正在重试");
             return;
         }
-        if (window == IntPtr.Zero && !CreateWidget())
-        {
-            ReportMode("无法创建任务栏组件，正在重试");
-            return;
-        }
+        if (window == IntPtr.Zero && !CreateWidget()) return;
         Position();
     }
 
     private bool CreateWidget()
     {
-        window = CreateWindowEx(0x08000000u, className, "WattHalo 快速监测",
+        // WS_EX_LAYERED | TOOLWINDOW | NOACTIVATE | NOPARENTNOTIFY; always a WS_CHILD of Explorer.
+        window = CreateWindowEx(0x08080084u, className, "WattHalo 快速监测",
             0x44000000u, 0, 0, 1, 1, parent, IntPtr.Zero, GetModuleHandle(null), IntPtr.Zero);
-        if (window == IntPtr.Zero) return false;
+        if (window == IntPtr.Zero)
+        {
+            ReportNativeFailure("CreateWindowEx", Marshal.GetLastWin32Error());
+            return false;
+        }
         CreateTooltip();
         return true;
     }
@@ -174,7 +185,13 @@ internal sealed class TaskbarWidget : IDisposable
         currentTooltip = "";
         if (window != IntPtr.Zero && IsWindow(window)) DestroyWindow(window);
         window = IntPtr.Zero;
+        surface.Dispose();
+        renderBitmap = null;
+        visual = null;
     }
+
+    private void ReportNativeFailure(string operation, int error) =>
+        ReportMode($"任务栏 {operation} 失败（Win32 {error}），正在重试");
 
     private void ReportMode(string mode)
     {
@@ -210,26 +227,46 @@ internal sealed class TaskbarWidget : IDisposable
             return;
         }
         var origin = new Point { X = left };
-        if (GetParent(window) != parent || !ClientToScreen(parent, ref origin) ||
-            !GetWindowRect(window, out var current) ||
-            ((current.Left != origin.X || current.Top != origin.Y || current.Right - current.Left != width || current.Bottom - current.Top != height) &&
-                !SetWindowPos(window, IntPtr.Zero, left, 0, width, height, 0x0010)))
+        void PlacementFailed(string operation)
+        {
+            var error = Marshal.GetLastWin32Error();
+            ShowWindow(window, 0);
+            ReportNativeFailure(operation, error);
+        }
+        if (GetParent(window) != parent)
         {
             ShowWindow(window, 0);
-            ReportMode("无法嵌入 Windows 任务栏，正在重试");
+            ReportMode("任务栏父窗口已变化，正在重试");
+            return;
+        }
+        if (!ClientToScreen(parent, ref origin)) { PlacementFailed("ClientToScreen"); return; }
+        if (!GetWindowRect(window, out var current)) { PlacementFailed("GetWindowRect"); return; }
+        if ((current.Left != origin.X || current.Top != origin.Y || current.Right - current.Left != width || current.Bottom - current.Top != height) &&
+            !SetWindowPos(window, IntPtr.Zero, left, 0, width, height, 0x0010))
+        {
+            PlacementFailed("SetWindowPos");
+            return;
+        }
+        if (!RenderAndPresent(scale))
+        {
+            ShowWindow(window, 0);
             return;
         }
         ShowWindow(window, 8);
-        if (IsWindowVisible(window) && !WidgetReceivesInput())
-            SetWindowPos(window, IntPtr.Zero, 0, 0, 0, 0, 0x0013);
+        if (IsWindowVisible(window) && !WidgetReceivesInput() &&
+            !SetWindowPos(window, IntPtr.Zero, 0, 0, 0, 0, 0x0013))
+        {
+            PlacementFailed("SetWindowPos/Z序");
+            return;
+        }
         if (!IsWindowVisible(window) || !WidgetReceivesInput())
         {
+            ShowWindow(window, 0);
             ReportMode("任务栏组件暂不可见，正在重试");
             return;
         }
         ReportMode(shownCount < metrics.Length ? $"已嵌入任务栏 · 已折叠 {metrics.Length - shownCount} 项" : "已嵌入任务栏");
         UpdateTooltip();
-        InvalidateRect(window, IntPtr.Zero, false);
     }
 
     private bool WidgetReceivesInput()
@@ -298,7 +335,7 @@ internal sealed class TaskbarWidget : IDisposable
             if (end > start) intervals.Add((start, end));
         }
         intervals.Sort((a, b) => b.Right.CompareTo(a.Right));
-        for (var count = settings.TaskbarMetrics.Length; count >= 1; count--)
+        for (var count = settings.TaskbarMetrics.Length; count >= 0; count--)
         {
             var candidateWidth = WidgetWidth(count, settings.TaskbarMetrics.Length, scale);
             var right = client.Right - margin;
@@ -322,6 +359,7 @@ internal sealed class TaskbarWidget : IDisposable
         if (eventHook != IntPtr.Zero) UnhookWinEvent(eventHook);
         eventHook = IntPtr.Zero;
         obstacleTray = tray;
+        automationObstacles = null;
         InvalidateObstacles(true);
         if (tray == IntPtr.Zero) return;
         GetWindowThreadProcessId(tray, out var processId);
@@ -331,19 +369,19 @@ internal sealed class TaskbarWidget : IDisposable
 
     private void TaskbarEvent(IntPtr hook, uint eventId, IntPtr hwnd, int objectId, int childId, uint eventThread, uint time)
     {
-        if (hwnd == IntPtr.Zero || childId != 0 || (objectId != 0 && objectId != -4) ||
+        if (hwnd == IntPtr.Zero || hwnd == window || IsChild(window, hwnd) || childId != 0 || (objectId != 0 && objectId != -4) ||
             eventId is not (0x8000 or 0x8001 or 0x8002 or 0x8003 or 0x8004 or 0x800B) ||
             eventId == 0x800B && objectId != 0 ||
             (hwnd != obstacleTray && !IsChild(obstacleTray, hwnd))) return;
         InvalidateObstacles(false);
+        Wake();
     }
 
     private void InvalidateObstacles(bool immediate)
     {
+        if (!layoutDirty || immediate) lastObstacleAttempt = 0;
         layoutDirty = true;
-        automationObstacles = null;
         obstacleGeneration++;
-        if (immediate) lastObstacleAttempt = 0;
     }
 
     // The composition host spans the taskbar; its accessible controls provide the occupied rectangles.
@@ -353,13 +391,15 @@ internal sealed class TaskbarWidget : IDisposable
         {
             obstacleQuery = null;
             if (completed.IsFaulted) _ = completed.Exception;
-            if (queryTray == tray && queryGeneration == obstacleGeneration)
+            if (queryTray == tray && queryGeneration == obstacleGeneration &&
+                completed.IsCompletedSuccessfully && completed.Result is { Length: > 0 } result)
             {
-                automationObstacles = completed.IsCompletedSuccessfully ? completed.Result : null;
-                layoutDirty = automationObstacles is not { Length: > 0 };
+                automationObstacles = result;
+                layoutDirty = false;
             }
+            else if (queryTray == tray) layoutDirty = true;
         }
-        var interval = layoutDirty ? 5 : eventHook == IntPtr.Zero ? 10 : 30;
+        var interval = layoutDirty ? .25 : eventHook == IntPtr.Zero ? 10 : 30;
         if (obstacleQuery is null && (lastObstacleAttempt == 0 || Stopwatch.GetElapsedTime(lastObstacleAttempt).TotalSeconds >= interval))
         {
             lastObstacleAttempt = Stopwatch.GetTimestamp();
@@ -461,7 +501,11 @@ internal sealed class TaskbarWidget : IDisposable
             switch (message)
             {
                 case 0x14: return (IntPtr)1;
-                case 0x0F: Paint(hwnd); return IntPtr.Zero;
+                case 0x0F:
+                    BeginPaint(hwnd, out var paint);
+                    EndPaint(hwnd, ref paint);
+                    return IntPtr.Zero;
+                case 0x21: return (IntPtr)3;
                 case 0x201:
                     System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(controller.TogglePanel));
                     return IntPtr.Zero;
@@ -477,63 +521,133 @@ internal sealed class TaskbarWidget : IDisposable
         return DefWindowProc(hwnd, message, wParam, lParam);
     }
 
-    private void Paint(IntPtr hwnd)
+    private bool RenderAndPresent(double scale)
     {
-        var dc = BeginPaint(hwnd, out var paint);
-        if (dc == IntPtr.Zero) return;
-        var memory = IntPtr.Zero; var bitmap = IntPtr.Zero; var previousBitmap = IntPtr.Zero;
-        var font = IntPtr.Zero; var previousFont = IntPtr.Zero; var brush = IntPtr.Zero;
         try
         {
-            memory = CreateCompatibleDC(dc);
-            bitmap = CreateCompatibleBitmap(dc, Math.Max(width, 1), Math.Max(height, 1));
-            if (memory == IntPtr.Zero || bitmap == IntPtr.Zero) return;
-            previousBitmap = SelectObject(memory, bitmap);
-            var area = new Rect { Right = width, Bottom = height };
+            if (!surface.Ensure(width, height, out var allocationError))
+            {
+                ReportNativeFailure("CreateDIBSection/内存 DC", allocationError);
+                return false;
+            }
+            visual ??= new Media.DrawingVisual();
+            Media.TextOptions.SetTextRenderingMode(visual, Media.TextRenderingMode.Grayscale);
+            Media.TextOptions.SetTextHintingMode(visual, Media.TextHintingMode.Fixed);
             var highContrast = System.Windows.SystemParameters.HighContrast;
-            static uint ColorRef(System.Drawing.Color color) => (uint)System.Drawing.ColorTranslator.ToWin32(color);
-            var background = highContrast ? ColorRef(System.Drawing.SystemColors.Window) : lightTaskbar ? 0x00F5F5F5u : 0x0022201Cu;
-            var primary = highContrast ? ColorRef(System.Drawing.SystemColors.WindowText) : lightTaskbar ? 0x002B251Du : 0x00EDECE8u;
-            var secondary = highContrast ? primary : lightTaskbar ? 0x006B7F08u : 0x00BBCE76u;
-            brush = CreateSolidBrush(background);
-            FillRect(memory, ref area, brush);
-            SetBkMode(memory, 1);
-            var scale = Math.Max(1, GetDpiForWindow(hwnd) / 96d);
-            font = CreateFont(-(int)(11 * scale), 0, 0, 0, 500, 0, 0, 0, 1, 0, 0, 5, 0, "Segoe UI");
-            if (font != IntPtr.Zero) previousFont = SelectObject(memory, font);
+            var primary = highContrast ? System.Windows.SystemColors.WindowTextColor :
+                lightTaskbar ? Media.Color.FromRgb(29, 37, 43) : Media.Color.FromRgb(232, 236, 237);
+            var secondary = highContrast ? primary :
+                lightTaskbar ? Media.Color.FromRgb(8, 127, 107) : Media.Color.FromRgb(118, 206, 187);
+            var face = new Media.Typeface(new Media.FontFamily("Segoe UI"), System.Windows.FontStyles.Normal,
+                System.Windows.FontWeights.Medium, System.Windows.FontStretches.Normal);
             var metrics = settings.TaskbarMetrics;
             var count = Math.Min(shownCount, metrics.Length);
-            for (var i = 0; i < count; i++)
+            var dipWidth = width / scale;
+            var dipHeight = height / scale;
+            using (var drawing = visual.RenderOpen())
             {
-                var (top, bottom) = MetricText(metrics[i]);
-                if (stale)
+                // Nonzero alpha keeps transparent gaps clickable on a layered child window.
+                var background = highContrast ? System.Windows.SystemColors.WindowColor : Media.Color.FromArgb(1, 0, 0, 0);
+                drawing.DrawRectangle(new Media.SolidColorBrush(background), null, new System.Windows.Rect(0, 0, dipWidth, dipHeight));
+                void Draw(string text, double x, double y, double availableWidth, Media.Color color)
                 {
-                    top = Controls.Ui.Name(metrics[i]) + "  —";
-                    bottom = metrics[i] is MetricKind.Cpu or MetricKind.Gpu ? "— W" : Controls.Ui.T("数据已过期", "Stale data");
+                    var formatted = new Media.FormattedText(text, CultureInfo.CurrentUICulture, System.Windows.FlowDirection.LeftToRight,
+                        face, 11, new Media.SolidColorBrush(color), scale)
+                    { MaxTextWidth = Math.Max(1, availableWidth), MaxLineCount = 1, Trimming = System.Windows.TextTrimming.CharacterEllipsis };
+                    drawing.DrawText(formatted, new System.Windows.Point(Math.Round(x * scale) / scale, Math.Round(y * scale) / scale));
                 }
-                var x = (int)((8 + i * 108) * scale);
-                var r = new Rect { Left = x, Top = (int)(height / 2d - 15 * scale), Right = Math.Min(width, x + (int)(104 * scale)), Bottom = height };
-                SetTextColor(memory, primary); DrawText(memory, top, -1, ref r, 0x820);
-                r.Top += (int)(15 * scale);
-                SetTextColor(memory, secondary); DrawText(memory, bottom, -1, ref r, 0x820);
+                for (var i = 0; i < count; i++)
+                {
+                    var (top, bottom) = MetricText(metrics[i]);
+                    if (stale)
+                    {
+                        top = Controls.Ui.Name(metrics[i]) + "  —";
+                        bottom = metrics[i] is MetricKind.Cpu or MetricKind.Gpu ? "— W" : Controls.Ui.T("数据已过期", "Stale data");
+                    }
+                    var x = 8 + i * 108;
+                    Draw(top, x, dipHeight / 2 - 15, 104, primary);
+                    Draw(bottom, x, dipHeight / 2, 104, secondary);
+                }
+                if (count < metrics.Length)
+                    Draw("+" + (metrics.Length - count), 8 + count * 108, dipHeight / 2 - 8, 30, primary);
             }
-            if (count < metrics.Length)
-            {
-                var more = new Rect { Left = (int)((8 + count * 108) * scale), Top = (int)(height / 2d - 8 * scale), Right = width, Bottom = height };
-                SetTextColor(memory, primary);
-                DrawText(memory, "+" + (metrics.Length - count), -1, ref more, 0x820);
-            }
-            BitBlt(dc, 0, 0, width, height, memory, 0, 0, 0x00CC0020);
+            if (renderBitmap is null || renderBitmap.PixelWidth != width || renderBitmap.PixelHeight != height ||
+                Math.Abs(renderBitmap.DpiX - 96 * scale) > .01)
+                renderBitmap = new Imaging.RenderTargetBitmap(width, height, 96 * scale, 96 * scale, Media.PixelFormats.Pbgra32);
+            else renderBitmap.Clear();
+            renderBitmap.Render(visual);
+            renderBitmap.CopyPixels(new System.Windows.Int32Rect(0, 0, width, height), surface.Bits, checked(width * height * 4), checked(width * 4));
         }
-        finally
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or OutOfMemoryException or OverflowException or COMException)
         {
-            if (memory != IntPtr.Zero && previousFont != IntPtr.Zero) SelectObject(memory, previousFont);
-            if (font != IntPtr.Zero) DeleteObject(font);
-            if (brush != IntPtr.Zero) DeleteObject(brush);
-            if (memory != IntPtr.Zero && previousBitmap != IntPtr.Zero) SelectObject(memory, previousBitmap);
+            Trace.TraceError("Taskbar layered rendering failed: " + ex);
+            ReportMode($"任务栏像素渲染失败（HRESULT 0x{ex.HResult:X8}），正在重试");
+            return false;
+        }
+        if (surface.Present(window, out var error)) return true;
+        ReportNativeFailure("UpdateLayeredWindow", error);
+        return false;
+    }
+
+    /// <summary>Reusable top-down premultiplied BGRA surface owned by the taskbar thread.</summary>
+    private sealed class LayeredSurface : IDisposable
+    {
+        private IntPtr memory, bitmap, previous;
+        private int width, height;
+        public IntPtr Bits { get; private set; }
+
+        public bool Ensure(int newWidth, int newHeight, out int error)
+        {
+            error = 0;
+            if (bitmap != IntPtr.Zero && width == newWidth && height == newHeight) return true;
+            Dispose();
+            memory = CreateCompatibleDC(IntPtr.Zero);
+            if (memory == IntPtr.Zero) { error = Marshal.GetLastWin32Error(); return false; }
+            var info = new BitmapInfo
+            {
+                Header = new BitmapInfoHeader
+                {
+                    Size = (uint)Marshal.SizeOf<BitmapInfoHeader>(), Width = newWidth, Height = -newHeight,
+                    Planes = 1, BitCount = 32
+                }
+            };
+            bitmap = CreateDIBSection(memory, ref info, 0, out var bits, IntPtr.Zero, 0);
+            if (bitmap == IntPtr.Zero || bits == IntPtr.Zero)
+            {
+                error = Marshal.GetLastWin32Error();
+                Dispose();
+                return false;
+            }
+            previous = SelectObject(memory, bitmap);
+            if (previous == IntPtr.Zero || previous == (IntPtr)(-1))
+            {
+                error = Marshal.GetLastWin32Error();
+                previous = IntPtr.Zero;
+                Dispose();
+                return false;
+            }
+            Bits = bits;
+            width = newWidth; height = newHeight;
+            return true;
+        }
+
+        public bool Present(IntPtr hwnd, out int error)
+        {
+            var size = new Size { Width = width, Height = height };
+            var source = new Point();
+            var blend = new BlendFunction { SourceConstantAlpha = 255, AlphaFormat = 1 };
+            var success = UpdateLayeredWindow(hwnd, IntPtr.Zero, IntPtr.Zero, ref size, memory, ref source, 0, ref blend, 2);
+            error = success ? 0 : Marshal.GetLastWin32Error();
+            return success;
+        }
+
+        public void Dispose()
+        {
+            if (memory != IntPtr.Zero && previous != IntPtr.Zero) SelectObject(memory, previous);
             if (bitmap != IntPtr.Zero) DeleteObject(bitmap);
             if (memory != IntPtr.Zero) DeleteDC(memory);
-            EndPaint(hwnd, ref paint);
+            memory = bitmap = previous = Bits = IntPtr.Zero;
+            width = height = 0;
         }
     }
 
@@ -575,13 +689,19 @@ internal sealed class TaskbarWidget : IDisposable
     { public uint Size, Style; public IntPtr Procedure; public int ClassExtra, WindowExtra; public IntPtr Instance, Icon, Cursor, Background; public string? MenuName; public string ClassName; public IntPtr SmallIcon; }
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] private struct Point { public int X, Y; }
+    [StructLayout(LayoutKind.Sequential)] private struct Size { public int Width, Height; }
+    [StructLayout(LayoutKind.Sequential, Pack = 1)] private struct BlendFunction
+    { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
+    [StructLayout(LayoutKind.Sequential)] private struct BitmapInfoHeader
+    { public uint Size; public int Width, Height; public ushort Planes, BitCount; public uint Compression, SizeImage; public int XPelsPerMeter, YPelsPerMeter; public uint ClrUsed, ClrImportant; }
+    [StructLayout(LayoutKind.Sequential)] private struct BitmapInfo { public BitmapInfoHeader Header; public uint Colors; }
     [StructLayout(LayoutKind.Sequential)] private struct Message { public IntPtr Hwnd; public uint Id; public IntPtr WParam, LParam; public uint Time; public Point Point; public uint Private; }
     [StructLayout(LayoutKind.Sequential)] private struct PaintStruct { public IntPtr Dc; public int Erase; public Rect Paint; public int Restore, IncUpdate; [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)] public byte[] Reserved; }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] private struct ToolInfo
     { public uint Size, Flags; public IntPtr Window; public UIntPtr Id; public Rect Rect; public IntPtr Instance, Text, Parameter, Reserved; }
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern ushort RegisterClassEx(ref WindowClass c);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool UnregisterClass(string c, IntPtr instance);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr CreateWindowEx(uint ex, string c, string title, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr CreateWindowEx(uint ex, string c, string title, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr DefWindowProc(IntPtr h, uint m, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] private static extern bool DestroyWindow(IntPtr h);
     [DllImport("user32.dll")] private static extern bool PeekMessage(out Message m, IntPtr h, uint min, uint max, uint remove);
@@ -600,14 +720,13 @@ internal sealed class TaskbarWidget : IDisposable
     [DllImport("user32.dll")] private static extern bool IsChild(IntPtr parent, IntPtr child);
     [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll")] private static extern IntPtr GetParent(IntPtr h);
-    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr h, out Rect r);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool GetWindowRect(IntPtr h, out Rect r);
     [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr h, out Rect r);
     [DllImport("user32.dll")] private static extern bool ScreenToClient(IntPtr h, ref Point p);
-    [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr h, ref Point p);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool ClientToScreen(IntPtr h, ref Point p);
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr h);
-    [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int height, uint flags);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int height, uint flags);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr h, int command);
-    [DllImport("user32.dll")] private static extern bool InvalidateRect(IntPtr h, IntPtr rect, bool erase);
     [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr h, EnumProc callback, IntPtr l);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr h, out uint processId);
     [DllImport("user32.dll")] private static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr module, WinEventProc callback, uint processId, uint threadId, uint flags);
@@ -618,17 +737,12 @@ internal sealed class TaskbarWidget : IDisposable
     [DllImport("user32.dll")] private static extern IntPtr LoadCursor(IntPtr instance, IntPtr name);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetModuleHandle(string? module);
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
-    [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr dc);
-    [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleBitmap(IntPtr dc, int w, int h);
-    [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
+    [DllImport("gdi32.dll", SetLastError = true)] private static extern IntPtr CreateCompatibleDC(IntPtr dc);
+    [DllImport("gdi32.dll", SetLastError = true)] private static extern IntPtr CreateDIBSection(IntPtr dc, ref BitmapInfo info, uint usage, out IntPtr bits, IntPtr section, uint offset);
+    [DllImport("gdi32.dll", SetLastError = true)] private static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr obj);
     [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr dc);
-    [DllImport("gdi32.dll")] private static extern IntPtr CreateSolidBrush(uint color);
-    [DllImport("gdi32.dll")] private static extern int SetTextColor(IntPtr dc, uint color);
-    [DllImport("gdi32.dll")] private static extern int SetBkMode(IntPtr dc, int mode);
-    [DllImport("gdi32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr CreateFont(int h, int w, int e, int o, int weight, uint italic, uint underline, uint strike, uint charset, uint output, uint clip, uint quality, uint pitch, string face);
-    [DllImport("user32.dll")] private static extern int FillRect(IntPtr dc, ref Rect r, IntPtr brush);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int DrawText(IntPtr dc, string text, int length, ref Rect r, uint format);
-    [DllImport("gdi32.dll")] private static extern bool BitBlt(IntPtr dst, int x, int y, int w, int h, IntPtr src, int sx, int sy, uint op);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr destinationDc, IntPtr destination,
+        ref Size size, IntPtr sourceDc, ref Point source, uint colorKey, ref BlendFunction blend, uint flags);
     [DllImport("comctl32.dll")] private static extern void InitCommonControls();
 }

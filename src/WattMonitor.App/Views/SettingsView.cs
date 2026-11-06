@@ -12,13 +12,16 @@ namespace WattMonitor.App.Views;
 internal sealed class SettingsView : StackPanel
 {
     private readonly AppController controller;
-    private readonly ComboBox theme = new(), language = new(), refresh = new(), top = new(), orbMetric = new();
+    private readonly ComboBox theme = new(), language = new(), refresh = new(), top = new(), orbMetric = new(), orbStyle = new();
+    private readonly Slider orbSize = new() { Minimum = 64, Maximum = 160, TickFrequency = 1, IsSnapToTickEnabled = true, Width = 180, VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBlock orbSizeValue = Ui.Text("88", 14);
+    private OrbFace? orbFace;
     private readonly CheckBox reduced = new(), startup = new(), orb = new(), taskbar = new(), pinned = new(), addTariff = new();
     private readonly TextBox watts = new(), efficiency = new(), price = new();
     private readonly DatePicker effective = new();
     private readonly TextBlock wattsError = Ui.Text("", 12), efficiencyError = Ui.Text("", 12), priceError = Ui.Text("", 12), dateError = Ui.Text("", 12);
     private readonly TextBlock billingFeedback = Ui.Text("", 12, Ui.Muted), tariffList = Ui.Text("", 12, Ui.Muted);
-    private readonly TextBlock orbPreview = Ui.Text("—", 19), orbPreviewLabel = Ui.Text("", 12, Ui.Muted), taskbarPreview = Ui.Text("", 14), taskbarMode = Ui.Text("", 12, Ui.Muted);
+    private readonly TextBlock orbPreview = Ui.Text("—", 22), orbPreviewLabel = Ui.Text("", 12, Ui.Muted), taskbarPreview = Ui.Text("", 14), taskbarMode = Ui.Text("", 12, Ui.Muted);
     private readonly TextBlock updateVersion = Ui.Text("", 13, Ui.Muted), updateStatus = Ui.Text("", 14), updateNotes = Ui.Text("", 12, Ui.Muted), updateHint = Ui.Text("", 12, Ui.Muted);
     private readonly ProgressBar updateProgress = new() { Minimum = 0, Maximum = 100, Height = 5, Margin = new Thickness(0, 8, 0, 8) };
     private Button? checkUpdates, installUpdate, retryTaskbar, repairService;
@@ -61,6 +64,17 @@ internal sealed class SettingsView : StackPanel
         var desktop = Section("桌面组件", "设置悬浮圆环、快览和任务栏指标");
         Check(desktop, orb, "显示悬浮圆环", b => controller.QueueSettings(s => s with { ShowOrb = b }));
         Choice(desktop, "圆环显示指标", orbMetric, Enum.GetValues<MetricKind>().Select(Ui.NameKey).ToArray()); orbMetric.SelectionChanged += (_, _) => { if (!suppress && orbMetric.SelectedIndex >= 0) controller.QueueSettings(s => s with { OrbMetric = (MetricKind)orbMetric.SelectedIndex }); };
+        Choice(desktop, "悬浮球样式", orbStyle, ["科技圆环", "简洁纯色", "半透明玻璃"]);
+        orbStyle.SelectionChanged += (_, _) => { if (!suppress && orbStyle.SelectedIndex >= 0) controller.QueueSettings(s => s with { OrbStyle = (OrbStyle)orbStyle.SelectedIndex }); };
+        var sizeControls = new StackPanel { Orientation = Orientation.Horizontal };
+        Ui.Bind(orbSize, System.Windows.Automation.AutomationProperties.NameProperty, "悬浮球尺寸");
+        orbSizeValue.Margin = new Thickness(10, 0, 0, 0); orbSizeValue.VerticalAlignment = VerticalAlignment.Center;
+        sizeControls.Children.Add(orbSize); sizeControls.Children.Add(orbSizeValue);
+        var resetOrbSize = Ui.Button("恢复默认尺寸", () => orbSize.Value = 88);
+        Ui.Bind(resetOrbSize, System.Windows.Automation.AutomationProperties.NameProperty, "恢复默认尺寸");
+        sizeControls.Children.Add(resetOrbSize);
+        desktop.Children.Add(SettingRow("悬浮球尺寸", sizeControls));
+        orbSize.ValueChanged += (_, _) => { if (!suppress) controller.QueueSettings(s => s with { OrbSize = (int)orbSize.Value }); };
         Check(desktop, pinned, "固定快览（点击外部不收起）", b => controller.QueueSettings(s => s with { PanelPinned = b }));
         Check(desktop, taskbar, "显示任务栏指标", b => controller.QueueSettings(s => s with { ShowTaskbar = b }));
         retryTaskbar = Ui.Button("重新检测任务栏", controller.RetryTaskbar);
@@ -94,10 +108,8 @@ internal sealed class SettingsView : StackPanel
     private UIElement Preview()
     {
         var block = Section("实时预览", "预览随当前采样与设置更新"); var row = new WrapPanel();
-        var circle = new Grid { Width = 98, Height = 98, Margin = new Thickness(0, 8, 24, 8) };
-        var outer = new Ellipse { StrokeThickness = 3 }; outer.SetResourceReference(Shape.StrokeProperty, "Ui.Accent"); circle.Children.Add(outer);
-        var inner = new Ellipse { Margin = new Thickness(7), StrokeThickness = 1 }; inner.SetResourceReference(Shape.StrokeProperty, "Ui.Line"); circle.Children.Add(inner);
-        var center = new StackPanel { VerticalAlignment = VerticalAlignment.Center }; orbPreview.TextAlignment = TextAlignment.Center; orbPreviewLabel.TextAlignment = TextAlignment.Center; center.Children.Add(orbPreview); center.Children.Add(orbPreviewLabel); circle.Children.Add(center); row.Children.Add(circle);
+        orbFace = new OrbFace(orbPreview, orbPreviewLabel) { Margin = new Thickness(0, 8, 24, 8) };
+        row.Children.Add(orbFace);
         var task = new StackPanel { VerticalAlignment = VerticalAlignment.Center, MinWidth = 240 }; task.Children.Add(Ui.Text("任务栏", 12, Ui.Muted)); var badge = new Border { CornerRadius = new CornerRadius(6), Padding = new Thickness(10, 5, 10, 5), Child = taskbarPreview }; badge.SetResourceReference(Border.BackgroundProperty, "Ui.Background"); badge.SetResourceReference(Border.BorderBrushProperty, "Ui.Line"); badge.BorderThickness = new Thickness(1); task.Children.Add(badge); task.Children.Add(taskbarMode); row.Children.Add(task); block.Children.Add(row); return Ui.Card(block);
     }
     private static StackPanel Section(string title, string description)
@@ -144,7 +156,7 @@ internal sealed class SettingsView : StackPanel
     public void Activate()
     {
         var s = controller.Settings; suppress = true;
-        theme.SelectedIndex = (int)s.Theme; language.SelectedIndex = (int)s.Language; refresh.SelectedIndex = Array.IndexOf(new[] { 1, 2, 5 }, s.RefreshSeconds); top.SelectedIndex = Array.IndexOf(new[] { 3, 10, 20 }, s.TopCount); orbMetric.SelectedIndex = (int)s.OrbMetric;
+        theme.SelectedIndex = (int)s.Theme; language.SelectedIndex = (int)s.Language; refresh.SelectedIndex = Array.IndexOf(new[] { 1, 2, 5 }, s.RefreshSeconds); top.SelectedIndex = Array.IndexOf(new[] { 3, 10, 20 }, s.TopCount); orbMetric.SelectedIndex = (int)s.OrbMetric; orbStyle.SelectedIndex = (int)s.OrbStyle; orbSize.Value = Math.Clamp(s.OrbSize, 64, 160);
         reduced.IsChecked = s.ReducedMotion; startup.IsChecked = s.StartWithWindows; orb.IsChecked = s.ShowOrb; taskbar.IsChecked = s.ShowTaskbar; pinned.IsChecked = s.PanelPinned;
         if (!order.Where(enabled.Contains).SequenceEqual(s.TaskbarMetrics)) { enabled.Clear(); enabled.UnionWith(s.TaskbarMetrics); order.Clear(); order.AddRange(s.TaskbarMetrics.Concat(Enum.GetValues<MetricKind>()).Distinct()); DrawOrder(); }
         suppress = false; Refresh();
@@ -152,10 +164,19 @@ internal sealed class SettingsView : StackPanel
     public void Refresh()
     {
         var s = controller.Settings; var kind = s.OrbMetric;
+        var size = Math.Clamp(s.OrbSize, 64, 160);
+        orbSizeValue.Text = size.ToString(CultureInfo.CurrentCulture);
+        if (orbFace is not null) { orbFace.Width = orbFace.Height = size; orbFace.Apply(s.OrbStyle); }
         var sample = controller.MonitorStatus.IsStale ? null : controller.Snapshot;
         var value = Ui.Value(sample, kind);
         orbPreview.Text = kind is MetricKind.Disk or MetricKind.Network ? Ui.Bytes(value) : value.HasValue ? value.Value.ToString("0") : "—";
-        orbPreviewLabel.Text = Ui.Name(kind) + (kind == MetricKind.Power ? " · W" : kind is MetricKind.Disk or MetricKind.Network ? "/s" : " · %");
+        orbPreview.FontSize = orbPreview.Text.Length > 7 ? 15 : orbPreview.Text.Length > 5 ? 18 : 22;
+        orbPreviewLabel.Text = controller.MonitorStatus.StorageError is not null ? Ui.T("记录失败") : controller.MonitorStatus.IsStale ? Ui.T("已过期") : kind switch
+        {
+            MetricKind.Power => Ui.T("W · 估算"),
+            MetricKind.Disk or MetricKind.Network => Ui.Name(kind) + "/s",
+            _ => Ui.Name(kind) + " %"
+        };
         var gpu = sample?.Gpus.FirstOrDefault(g => g.IsDiscrete) ?? sample?.Gpus.FirstOrDefault();
         string PreviewMetric(MetricKind metric)
         {

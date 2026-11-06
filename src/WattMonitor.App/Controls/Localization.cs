@@ -10,6 +10,7 @@ internal static class Localization
 {
     private static readonly Dictionary<string, string> english = new(StringComparer.Ordinal)
     {
+        ["悬浮球样式"] = "Floating orb style", ["科技圆环"] = "Tech ring", ["简洁纯色"] = "Solid", ["半透明玻璃"] = "Translucent glass", ["悬浮球尺寸"] = "Floating orb size", ["恢复默认尺寸"] = "Restore default size", ["面积"] = "Area",
         ["功率"] = "Power", ["内存"] = "Memory", ["磁盘"] = "Disk", ["网络"] = "Network",
         ["— 不可用"] = "— Unavailable", ["不可用"] = "Unavailable",
         ["等待采集"] = "Waiting for data", ["等待记录"] = "Waiting for records", ["等待本机采集"] = "Waiting for local data", ["正在连接采集源"] = "Connecting to the sampling source",

@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using WattMonitor.Core;
 
 namespace WattMonitor.App.Controls;
 
@@ -14,6 +15,7 @@ internal sealed class TimeSeriesChart : FrameworkElement
     private TimeSpan gap = TimeSpan.FromSeconds(5);
     private string unit = "";
     private bool percentage;
+    private LiveChartStyle style;
     private double? hoverX;
     private readonly ToolTip tooltip = new();
 
@@ -30,13 +32,14 @@ internal sealed class TimeSeriesChart : FrameworkElement
         IsVisibleChanged += (_, _) => { if (!IsVisible) { hoverX = null; SetTooltip(null); } };
     }
 
-    public void SetData(IEnumerable<(DateTimeOffset Time, double? Value)> values, int minutes, double gapSeconds, string label, bool percent)
+    public void SetData(IEnumerable<(DateTimeOffset Time, double? Value)> values, int minutes, double gapSeconds, string label, bool percent, LiveChartStyle chartStyle)
     {
         end = DateTimeOffset.Now;
         duration = TimeSpan.FromMinutes(minutes);
         gap = TimeSpan.FromSeconds(gapSeconds);
         unit = label;
         percentage = percent;
+        style = chartStyle;
         samples = values.Where(p => p.Time >= end - duration && p.Time <= end).OrderBy(p => p.Time).ToArray();
         if (IsVisible) InvalidateVisual();
     }
@@ -78,6 +81,10 @@ internal sealed class TimeSeriesChart : FrameworkElement
 
         var pixels = Math.Max(1, (int)Math.Ceiling(rect.Width * VisualTreeHelper.GetDpi(this).DpiScaleX));
         var pen = new Pen(Ui.Accent, 1.8);
+        var fill = Ui.Accent.Clone();
+        fill.Opacity = SystemParameters.HighContrast ? .5 : .22;
+        var barWidth = Math.Clamp(rect.Width * gap.TotalSeconds / 1.5 / duration.TotalSeconds * .8, 1, 8);
+        dc.PushClip(new RectangleGeometry(rect));
         Point? previous = null;
         DateTimeOffset? previousTime = null;
         var bucket = -1;
@@ -87,9 +94,29 @@ internal sealed class TimeSeriesChart : FrameworkElement
             if (bucket < 0) return;
             var x = rect.Left + (bucket + .5) / pixels * rect.Width;
             var head = new Point(x, Y(first));
-            if (previous.HasValue) dc.DrawLine(pen, previous.Value, head);
-            else dc.DrawEllipse(Ui.Accent, null, head, 1.5, 1.5);
-            if (high != low) dc.DrawLine(pen, new Point(x, Y(low)), new Point(x, Y(high)));
+            if (style == LiveChartStyle.Bars)
+                dc.DrawRectangle(Ui.Accent, null, new Rect(Math.Max(rect.Left, x - barWidth / 2), Y(high), Math.Min(barWidth, rect.Right - Math.Max(rect.Left, x - barWidth / 2)), Math.Max(1, rect.Bottom - Y(high))));
+            else
+            {
+                if (previous.HasValue)
+                {
+                    if (style == LiveChartStyle.Area)
+                    {
+                        var geometry = new StreamGeometry();
+                        using (var context = geometry.Open())
+                        {
+                            context.BeginFigure(new Point(previous.Value.X, rect.Bottom), true, true);
+                            context.LineTo(previous.Value, true, false);
+                            context.LineTo(head, true, false);
+                            context.LineTo(new Point(head.X, rect.Bottom), true, false);
+                        }
+                        dc.DrawGeometry(fill, null, geometry);
+                    }
+                    dc.DrawLine(pen, previous.Value, head);
+                }
+                else dc.DrawEllipse(Ui.Accent, null, head, 1.5, 1.5);
+                if (high != low) dc.DrawLine(pen, new Point(x, Y(low)), new Point(x, Y(high)));
+            }
             previous = new Point(x, Y(last));
             bucket = -1;
         }
@@ -103,6 +130,7 @@ internal sealed class TimeSeriesChart : FrameworkElement
             else { last = number; low = Math.Min(low, number); high = Math.Max(high, number); }
         }
         Flush();
+        dc.Pop();
 
         if (hoverX is not { } hx || hx < rect.Left || hx > rect.Right) { SetTooltip(null); return; }
         var at = start + TimeSpan.FromSeconds((hx - rect.Left) / rect.Width * duration.TotalSeconds);
